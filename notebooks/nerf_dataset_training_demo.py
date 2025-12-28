@@ -254,7 +254,8 @@ def _(device, torch):
 
     # Scale the template to be visible in the scene
     # The lego scene is roughly centered at origin with radius ~4
-    template = template.centered().scale(0.5)
+    # Use larger scale so molecules are more visible and colors can be learned effectively
+    template = template.centered().scale(1.5)
     return (
         MoleculeInstance,
         MoleculeTemplate,
@@ -300,9 +301,17 @@ def _(MoleculeInstance, Scene, device, template, torch):
             template,
             sh_degree=0,
             init_position=_pos,
-            init_scale=1.0,
-            init_opacity=0.8,
+            init_scale=2.0,  # Larger scale for more visible molecules
+            init_opacity=0.9,  # Higher opacity
         )
+        # Randomize initial colors to show that they can be learned
+        with torch.no_grad():
+            instance.atom_sh_bank.sh_coeffs.data += torch.randn_like(
+                instance.atom_sh_bank.sh_coeffs
+            ) * 0.3
+            instance.bond_sh_bank.sh_coeffs.data += torch.randn_like(
+                instance.bond_sh_bank.sh_coeffs
+            ) * 0.2
         instances.append(instance)
         learn_scene.add_instance(instance)
 
@@ -395,14 +404,25 @@ def _(F, gt_images, learn_scene, render_scene, torch, train_cameras):
 
     # Training configuration
     n_iterations = 100
-    lr = 0.05
+    lr_pose = 0.05  # Learning rate for pose parameters
+    lr_color = 0.2  # Higher learning rate for color parameters (SH coefficients)
 
-    # Optimizer - optimize all scene parameters
-    optimizer = torch.optim.Adam(learn_scene.parameters(), lr=lr)
+    # Separate parameter groups with different learning rates
+    # This allows colors to learn faster while pose remains stable
+    pose_params = []
+    color_params = []
+    for inst in instances:
+        pose_params.extend([inst.translation, inst.rotation, inst.log_scale, inst.logit_opacity])
+        color_params.extend([inst.atom_sh_bank.sh_coeffs, inst.bond_sh_bank.sh_coeffs])
+
+    optimizer = torch.optim.Adam([
+        {"params": pose_params, "lr": lr_pose},
+        {"params": color_params, "lr": lr_color},
+    ])
 
     # Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=n_iterations, eta_min=lr * 0.1
+        optimizer, T_max=n_iterations, eta_min=lr_pose * 0.1
     )
 
     # Training history
@@ -466,15 +486,18 @@ def _(F, gt_images, learn_scene, render_scene, torch, train_cameras):
         avg_psnr,
         cam_idx,
         camera,
+        color_params,
         gt_img,
         history,
         iteration,
         l2,
         loss,
-        lr,
+        lr_color,
+        lr_pose,
         mse,
         n_iterations,
         optimizer,
+        pose_params,
         pred_img,
         psnr,
         scheduler,
@@ -781,8 +804,8 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
 
     # Save HTML file
     html_path = output_dir / "nerf_training_results.html"
-    with open(html_path, "w") as f:
-        f.write(html_content)
+    with open(html_path, "w") as _f:
+        _f.write(html_content)
 
     print(f"✓ Saved HTML visualization to: {html_path}")
     print(f"  Open in browser to view the results!")

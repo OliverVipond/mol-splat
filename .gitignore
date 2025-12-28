@@ -211,3 +211,4 @@ __marimo__/
 data/nerf_example_data.zip
 data/nerf_llff_data
 data/nerf_synthetic
+*.html
