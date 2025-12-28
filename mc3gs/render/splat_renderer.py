@@ -107,7 +107,7 @@ class ReferenceSplatRenderer(BaseBackend):
 
         # Precompute inverse covariances with regularization to avoid singular matrices
         # Add small epsilon to diagonal to ensure invertibility
-        eps = 1e-4
+        eps = 1e-3
         eye = torch.eye(2, device=self.device, dtype=cov2d.dtype).unsqueeze(0)
         cov2d_reg = cov2d + eps * eye
         cov2d_inv = torch.linalg.inv(cov2d_reg)  # [N_valid, 2, 2]

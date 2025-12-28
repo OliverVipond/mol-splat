@@ -241,7 +241,7 @@ def _():
     # Scale the template to be visible in the scene
     # The lego scene is roughly centered at origin with radius ~4
     # Use larger scale so molecules are more visible and colors can be learned effectively
-    template = template.centered().scale(1.5)
+    template = template.centered().scale(0.5)
     return MoleculeInstance, Scene, template
 
 
@@ -262,7 +262,7 @@ def _(MoleculeInstance, Scene, device, np, template, torch):
     # Create learnable scene with multiple water molecules
     learn_scene = Scene()
 
-    N_WATER_MOLECULES = 100
+    N_WATER_MOLECULES = 50
 
     # Add several water molecules at different positions
     # positions = [
@@ -285,7 +285,7 @@ def _(MoleculeInstance, Scene, device, np, template, torch):
             template,
             sh_degree=0,
             init_position=_pos,
-            init_scale=0.02,  # Larger scale for more visible molecules
+            init_scale=0.2,  # Larger scale for more visible molecules
             init_opacity=0.99,  # Higher opacity
         )
         # Randomize initial colors to show that they can be learned
@@ -393,9 +393,9 @@ def _(
     from mc3gs.train.losses import ssim_loss
 
     # Training configuration
-    n_iterations = 100
-    lr_pose = 0.05  # Learning rate for pose parameters
-    lr_color = 0.05 # Learning rate for color parameters
+    n_iterations = 10
+    lr_pose = 0.5  # Learning rate for pose parameters
+    lr_color = 0.5 # Learning rate for color parameters
 
     # Separate parameter groups with different learning rates
     # This allows colors to learn faster while pose remains stable
