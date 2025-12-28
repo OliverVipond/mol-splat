@@ -105,8 +105,12 @@ class ReferenceSplatRenderer(BaseBackend):
         colors = shade_sh(sh, view_dirs, sh_degree)  # [N_valid, 3]
         colors = torch.clamp(colors, 0, 1)
 
-        # Precompute inverse covariances
-        cov2d_inv = torch.linalg.inv(cov2d)  # [N_valid, 2, 2]
+        # Precompute inverse covariances with regularization to avoid singular matrices
+        # Add small epsilon to diagonal to ensure invertibility
+        eps = 1e-4
+        eye = torch.eye(2, device=self.device, dtype=cov2d.dtype).unsqueeze(0)
+        cov2d_reg = cov2d + eps * eye
+        cov2d_inv = torch.linalg.inv(cov2d_reg)  # [N_valid, 2, 2]
 
         # Create pixel grid
         y_coords = torch.arange(height, device=self.device, dtype=torch.float32)

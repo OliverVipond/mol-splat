@@ -68,21 +68,19 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 1. Load NeRF Dataset
+    mo.md("""
+    ## 1. Load NeRF Dataset
 
-        We load cameras and images from the `transforms_train.json` file.
-        This is the standard format used by NeRF synthetic datasets.
-        """
-    )
+    We load cameras and images from the `transforms_train.json` file.
+    This is the standard format used by NeRF synthetic datasets.
+    """)
     return
 
 
 @app.cell
 def _(Image, Path, device, json, np, torch):
     # Path to the dataset
-    DATASET_PATH = Path("data/nerf_synthetic/lego")
+    DATASET_PATH = Path("../data/nerf_synthetic/lego")
     TRANSFORMS_FILE = DATASET_PATH / "transforms_train.json"
 
     # Load transforms
@@ -149,10 +147,10 @@ def _(Image, Path, device, json, np, torch):
             # Our renderer uses OpenCV convention (camera looks down +Z, Y down)
             # Apply coordinate flip: flip Y and Z axes
             flip_yz = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]], dtype=np.float32)
-            
+
             R_w2c = c2w[:3, :3].T  # World to camera rotation
             t_w2c = -c2w[:3, :3].T @ c2w[:3, 3]  # World to camera translation
-            
+
             # Apply OpenGL to OpenCV conversion
             R = torch.tensor(flip_yz @ R_w2c, dtype=torch.float32, device=device)
             t = torch.tensor(flip_yz @ t_w2c, dtype=torch.float32, device=device)
@@ -179,17 +177,7 @@ def _(Image, Path, device, json, np, torch):
 
     print(f"\nLoaded {len(train_cameras)} training views")
     print(f"  Image size: {gt_images[0].shape[1]}x{gt_images[0].shape[2]}")
-    return (
-        DATASET_PATH,
-        IMAGE_SCALE,
-        NUM_TRAIN_VIEWS,
-        TRANSFORMS_FILE,
-        WHITE_BACKGROUND,
-        gt_images,
-        load_nerf_data,
-        train_cameras,
-        transforms_data,
-    )
+    return gt_images, train_cameras
 
 
 @app.cell
@@ -207,27 +195,25 @@ def _(gt_images, np, plt):
     plt.suptitle("Ground Truth Training Views (from NeRF Lego Dataset)", fontsize=14, fontweight="bold")
     plt.tight_layout()
     plt.show()
-    return axes1, fig1, idx
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ## 2. Create Molecule Template
-
-        We create a water molecule template. Obviously water won't match
-        the lego bulldozer, but this demonstrates the pipeline!
-
-        For a real application, you would use a molecule that matches
-        your scene (e.g., if imaging actual molecules).
-        """
-    )
     return
 
 
 @app.cell
-def _(device, torch):
+def _(mo):
+    mo.md("""
+    ## 2. Create Molecule Template
+
+    We create a water molecule template. Obviously water won't match
+    the lego bulldozer, but this demonstrates the pipeline!
+
+    For a real application, you would use a molecule that matches
+    your scene (e.g., if imaging actual molecules).
+    """)
+    return
+
+
+@app.cell
+def _():
     from mc3gs.chemistry.rdkit_templates import create_template_from_smiles
     from mc3gs.chemistry.typing import TypeVocabulary
     from mc3gs.model import MoleculeInstance, MoleculeTemplate, Scene
@@ -256,43 +242,41 @@ def _(device, torch):
     # The lego scene is roughly centered at origin with radius ~4
     # Use larger scale so molecules are more visible and colors can be learned effectively
     template = template.centered().scale(1.5)
-    return (
-        MoleculeInstance,
-        MoleculeTemplate,
-        Scene,
-        create_template_from_smiles,
-        TypeVocabulary,
-        template,
-        template_dict,
-        vocab,
-    )
+    return MoleculeInstance, Scene, template
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 3. Initialize Learnable Scene
+    mo.md("""
+    ## 3. Initialize Learnable Scene
 
-        We create a scene with water molecules positioned in the scene.
-        The optimization will adjust pose, scale, opacity, and colors
-        to best match the target images.
-        """
-    )
+    We create a scene with water molecules positioned in the scene.
+    The optimization will adjust pose, scale, opacity, and colors
+    to best match the target images.
+    """)
     return
 
 
 @app.cell
-def _(MoleculeInstance, Scene, device, template, torch):
+def _(MoleculeInstance, Scene, device, np, template, torch):
     # Create learnable scene with multiple water molecules
     learn_scene = Scene()
 
+    N_WATER_MOLECULES = 100
+
     # Add several water molecules at different positions
+    # positions = [
+    #     torch.tensor([0.0, 0.0, 0.0]),
+    #     torch.tensor([1.0, 0.5, 0.0]),
+    #     torch.tensor([-1.0, 0.0, 0.5]),
+    #     torch.tensor([0.5, -0.5, -0.5]),
+    # ]
+
     positions = [
-        torch.tensor([0.0, 0.0, 0.0]),
-        torch.tensor([1.0, 0.5, 0.0]),
-        torch.tensor([-1.0, 0.0, 0.5]),
-        torch.tensor([0.5, -0.5, -0.5]),
+        torch.tensor(
+            np.random.uniform(-1.0, 1.0, size=(3,)), dtype=torch.float32
+        )
+        for _ in range(N_WATER_MOLECULES)
     ]
 
     instances = []
@@ -301,8 +285,8 @@ def _(MoleculeInstance, Scene, device, template, torch):
             template,
             sh_degree=0,
             init_position=_pos,
-            init_scale=2.0,  # Larger scale for more visible molecules
-            init_opacity=0.9,  # Higher opacity
+            init_scale=0.02,  # Larger scale for more visible molecules
+            init_opacity=0.99,  # Higher opacity
         )
         # Randomize initial colors to show that they can be learned
         with torch.no_grad():
@@ -319,7 +303,7 @@ def _(MoleculeInstance, Scene, device, template, torch):
 
     print(f"Created scene with {len(instances)} water molecules")
     print(f"Total Gaussians: {learn_scene.total_gaussians}")
-    return instance, instances, learn_scene, positions
+    return instances, learn_scene
 
 
 @app.cell
@@ -351,7 +335,7 @@ def _(device, torch):
         return result["image"]
 
     print("Renderer initialized")
-    return ReferenceSplatRenderer, render_scene, renderer
+    return (render_scene,)
 
 
 @app.cell
@@ -377,35 +361,41 @@ def _(gt_images, learn_scene, np, plt, render_scene, torch, train_cameras):
     plt.suptitle("Ground Truth (top) vs Initial Prediction (bottom)", fontsize=14)
     plt.tight_layout()
     plt.show()
-    return axes2, fig2, gt_np, i2, pred, pred_np
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ## 4. Training Loop
-
-        Now we train the learnable scene to match the ground truth views
-        using photometric loss (L2 + SSIM).
-
-        **Note:** Since water molecules can't represent a lego bulldozer,
-        the optimization will just try to minimize the overall image error
-        by adjusting colors and positions. This demonstrates the pipeline
-        works with real images.
-        """
-    )
     return
 
 
 @app.cell
-def _(F, gt_images, learn_scene, render_scene, torch, train_cameras):
+def _(mo):
+    mo.md("""
+    ## 4. Training Loop
+
+    Now we train the learnable scene to match the ground truth views
+    using photometric loss (L2 + SSIM).
+
+    **Note:** Since water molecules can't represent a lego bulldozer,
+    the optimization will just try to minimize the overall image error
+    by adjusting colors and positions. This demonstrates the pipeline
+    works with real images.
+    """)
+    return
+
+
+@app.cell
+def _(
+    F,
+    gt_images,
+    instances,
+    learn_scene,
+    render_scene,
+    torch,
+    train_cameras,
+):
     from mc3gs.train.losses import ssim_loss
 
     # Training configuration
     n_iterations = 100
     lr_pose = 0.05  # Learning rate for pose parameters
-    lr_color = 0.2  # Higher learning rate for color parameters (SH coefficients)
+    lr_color = 0.05 # Learning rate for color parameters
 
     # Separate parameter groups with different learning rates
     # This allows colors to learn faster while pose remains stable
@@ -471,41 +461,18 @@ def _(F, gt_images, learn_scene, render_scene, torch, train_cameras):
         scheduler.step()
 
         # Record history
-        if iteration % 5 == 0 or iteration == n_iterations - 1:
+        if iteration % 2 == 0 or iteration == n_iterations - 1:
             history["loss"].append(total_loss.item())
             history["psnr"].append(avg_psnr)
             history["iteration"].append(iteration)
 
-            if iteration % 20 == 0:
+            if iteration % 2 == 0:
                 print(f"  Iter {iteration:3d}: Loss={total_loss.item():.4f}, PSNR={avg_psnr:.2f}dB")
 
     print(f"\nTraining complete!")
     print(f"  Final Loss: {history['loss'][-1]:.4f}")
     print(f"  Final PSNR: {history['psnr'][-1]:.2f}dB")
-    return (
-        avg_psnr,
-        cam_idx,
-        camera,
-        color_params,
-        gt_img,
-        history,
-        iteration,
-        l2,
-        loss,
-        lr_color,
-        lr_pose,
-        mse,
-        n_iterations,
-        optimizer,
-        pose_params,
-        pred_img,
-        psnr,
-        scheduler,
-        ssim,
-        ssim_loss,
-        total_loss,
-        total_psnr,
-    )
+    return (history,)
 
 
 @app.cell
@@ -527,18 +494,16 @@ def _(history, plt):
 
     plt.tight_layout()
     plt.show()
-    return ax3a, ax3b, fig3
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## 5. Results
+    mo.md("""
+    ## 5. Results
 
-        Let's compare the final optimized renders with the ground truth.
-        """
-    )
+    Let's compare the final optimized renders with the ground truth.
+    """)
     return
 
 
@@ -571,7 +536,7 @@ def _(gt_images, learn_scene, np, plt, render_scene, torch, train_cameras):
     plt.suptitle("Ground Truth vs Optimized (with Difference)", fontsize=14, fontweight="bold")
     plt.tight_layout()
     plt.show()
-    return axes4, diff4, fig4, gt_np4, i4, pred4, pred_np4
+    return
 
 
 @app.cell
@@ -601,24 +566,31 @@ def _(instances, mo, torch):
         match your actual scene (e.g., microscopy images of actual molecules).
         """
     )
-    return (params_table,)
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        """
-        ## 6. Save HTML Visualization
-
-        Save an interactive HTML file displaying the fitted scene results.
-        This can be opened in any browser to view the final renders.
-        """
-    )
     return
 
 
 @app.cell
-def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_cameras):
+def _(mo):
+    mo.md("""
+    ## 6. Save HTML Visualization
+
+    Save an interactive HTML file displaying the fitted scene results.
+    This can be opened in any browser to view the final renders.
+    """)
+    return
+
+
+@app.cell
+def _(
+    Path,
+    gt_images,
+    history,
+    learn_scene,
+    np,
+    render_scene,
+    torch,
+    train_cameras,
+):
     import base64
     from datetime import datetime
     from io import BytesIO
@@ -651,8 +623,8 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
 
     # Generate HTML
     html_content = f'''<!DOCTYPE html>
-<html lang="en">
-<head>
+    <html lang="en">
+    <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MC-3GS Training Results - NeRF Dataset</title>
@@ -744,8 +716,8 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
             font-size: 0.85rem;
         }}
     </style>
-</head>
-<body>
+    </head>
+    <body>
     <div class="container">
         <h1>🔬 MC-3GS Training Results</h1>
         <p class="subtitle">Molecule-Constrained Gaussian Splatting on NeRF Lego Dataset</p>
@@ -771,7 +743,7 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
 
         <h2 class="section-title">📸 Ground Truth vs Optimized Renders</h2>
         <div class="views-grid">
-'''
+    '''
 
     for _view_idx, _view_data in enumerate(rendered_views):
         html_content += f'''
@@ -788,7 +760,7 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
                     </div>
                 </div>
             </div>
-'''
+    '''
 
     html_content += f'''
         </div>
@@ -798,9 +770,9 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
             <p>Note: Water molecules cannot fully represent the lego scene - this demonstrates the training pipeline.</p>
         </div>
     </div>
-</body>
-</html>
-'''
+    </body>
+    </html>
+    '''
 
     # Save HTML file
     html_path = output_dir / "nerf_training_results.html"
@@ -809,33 +781,31 @@ def _(Path, gt_images, history, learn_scene, np, render_scene, torch, train_came
 
     print(f"✓ Saved HTML visualization to: {html_path}")
     print(f"  Open in browser to view the results!")
-    return BytesIO, base64, datetime, html_content, html_path, output_dir, rendered_views, tensor_to_base64
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ## Conclusion
+    mo.md("""
+    ## Conclusion
 
-        This demo showed how to use MC-3GS with real images from NeRF datasets:
+    This demo showed how to use MC-3GS with real images from NeRF datasets:
 
-        1. **Data Loading**: Load cameras and images from `transforms_train.json`
-        2. **Scene Setup**: Create molecule templates and initialize scene
-        3. **Training**: Optimize molecule parameters using photometric loss
-        4. **Evaluation**: Compare predictions with ground truth
-        5. **Export**: Save HTML visualization for viewing in browser
+    1. **Data Loading**: Load cameras and images from `transforms_train.json`
+    2. **Scene Setup**: Create molecule templates and initialize scene
+    3. **Training**: Optimize molecule parameters using photometric loss
+    4. **Evaluation**: Compare predictions with ground truth
+    5. **Export**: Save HTML visualization for viewing in browser
 
-        ### Output Files
-        - `notebooks/example_outputs/nerf_training_results.html` - Interactive visualization
+    ### Output Files
+    - `notebooks/example_outputs/nerf_training_results.html` - Interactive visualization
 
-        ### For Real Applications
-        - Use molecules that match your scene (e.g., actual molecular microscopy data)
-        - Increase training iterations and views
-        - Use higher SH degree for view-dependent effects
-        - Use CUDA backend for faster rendering at higher resolutions
-        """
-    )
+    ### For Real Applications
+    - Use molecules that match your scene (e.g., actual molecular microscopy data)
+    - Increase training iterations and views
+    - Use higher SH degree for view-dependent effects
+    - Use CUDA backend for faster rendering at higher resolutions
+    """)
     return
 
 
