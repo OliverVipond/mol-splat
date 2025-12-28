@@ -174,6 +174,14 @@ class TypeVocabulary:
         """Check if type ID corresponds to a bond."""
         return type_id >= len(self.atom_types)
 
+    def get_atom_colors(self) -> list[tuple[float, float, float]]:
+        """Get default colors for all atom types.
+
+        Returns:
+            List of RGB tuples for each atom type.
+        """
+        return [at.color for at in self.atom_types]
+
     @classmethod
     def default(cls, include_bonds: bool = True) -> "TypeVocabulary":
         """Create default vocabulary with common atom and bond types.

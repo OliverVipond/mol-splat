@@ -150,10 +150,12 @@ class MoleculeInstance(nn.Module):
         self.logit_opacity = nn.Parameter(torch.full((n,), init_logit, device=device))
 
         # Separate SH banks for atoms and bonds
+        # Initialize atoms with standard CPK colors from the vocabulary
         num_atom_types = template.type_vocab.num_atom_types
-        self.atom_sh_bank = AtomSHBank(num_atom_types, sh_degree)
+        atom_colors = template.type_vocab.get_atom_colors()
+        self.atom_sh_bank = AtomSHBank(num_atom_types, sh_degree, init_colors=atom_colors)
 
-        # Single color for all bonds in this molecule
+        # Single color for all bonds in this molecule (gray by default)
         self.bond_sh_bank = BondSHBank(sh_degree)
 
         # Precompute atom/bond masks from template

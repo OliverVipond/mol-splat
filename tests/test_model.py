@@ -23,7 +23,7 @@ def simple_template():
 
     cov_local = torch.eye(3).unsqueeze(0).expand(3, -1, -1).clone() * 0.1
 
-    type_id = torch.tensor([0, 0, 1])  # Two C, one N (all atoms)
+    type_id = torch.tensor([0, 0, 3])  # Two C_sp3, one N (different colors)
 
     return MoleculeTemplate(
         p_local=p_local,

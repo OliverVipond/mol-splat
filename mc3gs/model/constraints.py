@@ -46,14 +46,15 @@ class AtomSHBank(nn.Module):
         self,
         num_atom_types: int,
         sh_degree: int = 3,
-        init_scale: float = 0.1,
+        init_colors: Tensor | list[tuple[float, float, float]] | None = None,
     ) -> None:
         """Initialize atom SH coefficient bank.
 
         Args:
             num_atom_types: Number of unique atom types.
             sh_degree: Maximum spherical harmonics degree (0-4).
-            init_scale: Scale for random initialization.
+            init_colors: Initial RGB colors for each atom type [T, 3] or list of tuples.
+                        If None, uses gray (0.5, 0.5, 0.5) for all types.
         """
         super().__init__()
 
@@ -62,17 +63,20 @@ class AtomSHBank(nn.Module):
         self.num_sh_coeffs = (sh_degree + 1) ** 2
 
         # SH coefficients: [T, B, 3] where T = num_atom_types, B = num_sh_coeffs
+        # SH DC format: sh_dc = color / C0, so color = sh_dc * C0
+        C0 = 0.28209479177387814
         sh_coeffs = torch.zeros(num_atom_types, self.num_sh_coeffs, 3)
 
-        # DC component (index 0) gets non-zero init
-        sh_coeffs[:, 0, :] = torch.randn(num_atom_types, 3) * init_scale + 0.5
+        # DC component (index 0): initialize from provided colors or default gray
+        if init_colors is not None:
+            if isinstance(init_colors, list):
+                init_colors = torch.tensor(init_colors, dtype=torch.float32)
+            sh_coeffs[:, 0, :] = init_colors / C0
+        else:
+            # Default to neutral gray
+            sh_coeffs[:, 0, :] = 0.5 / C0
 
-        # Higher degrees get smaller init
-        if self.num_sh_coeffs > 1:
-            sh_coeffs[:, 1:, :] = torch.randn(
-                num_atom_types, self.num_sh_coeffs - 1, 3
-            ) * (init_scale * 0.1)
-
+        # Higher degrees stay zero (no view-dependent effects initially)
         self.sh_coeffs = nn.Parameter(sh_coeffs)
 
     def get_sh_coeffs(self, atom_type_ids: Tensor) -> Tensor:

@@ -170,7 +170,7 @@ def _(MoleculeInstance, mo, templates, torch):
     for _name, _template in templates.items():
         instance = MoleculeInstance(
             _template,
-            sh_degree=0,  # DC only for simplicity
+            sh_degree=1,  # DC only for simplicity
             init_position=positions[_name],
             init_scale=1.0,
             init_opacity=0.9,
