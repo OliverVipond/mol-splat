@@ -96,6 +96,32 @@ def _(Image, Path, device, json, np, torch):
     NUM_TRAIN_VIEWS = 8  # Use subset of views
     WHITE_BACKGROUND = True  # Blend alpha with white
 
+    # sRGB to linear RGB conversion (inverse gamma)
+    def srgb_to_linear(srgb):
+        """Convert sRGB to linear RGB (undo gamma encoding).
+
+        NeRF datasets are stored in sRGB color space, but our renderer
+        operates in linear space. This conversion ensures colors match.
+        """
+        linear = np.where(
+            srgb <= 0.04045,
+            srgb / 12.92,
+            ((srgb + 0.055) / 1.055) ** 2.4
+        )
+        return linear.astype(np.float32)
+
+    def linear_to_srgb(linear):
+        """Convert linear RGB to sRGB for display.
+
+        Apply gamma encoding so rendered images look correct on screen.
+        """
+        srgb = np.where(
+            linear <= 0.0031308,
+            12.92 * linear,
+            1.055 * (linear ** (1.0 / 2.4)) - 0.055
+        )
+        return np.clip(srgb, 0, 1).astype(np.float32)
+
     # Load a subset of cameras and images
     def load_nerf_data(transforms_data, dataset_path, scale=0.25, num_views=8, device="cpu"):
         """Load cameras and images from NeRF transforms.json format."""
@@ -126,6 +152,10 @@ def _(Image, Path, device, json, np, torch):
                 rgb = img_array[..., :3]
                 alpha = img_array[..., 3:4]
                 img_array = rgb * alpha + (1 - alpha)  # White background
+
+            # Convert from sRGB to linear RGB for training
+            # NeRF images are stored in sRGB but our renderer operates in linear space
+            img_array = srgb_to_linear(img_array)
 
             # To tensor [C, H, W]
             img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).float().to(device)
@@ -177,18 +207,21 @@ def _(Image, Path, device, json, np, torch):
 
     print(f"\nLoaded {len(train_cameras)} training views")
     print(f"  Image size: {gt_images[0].shape[1]}x{gt_images[0].shape[2]}")
-    return gt_images, train_cameras
+    return gt_images, linear_to_srgb, train_cameras
 
 
 @app.cell
-def _(gt_images, np, plt):
+def _(gt_images, linear_to_srgb, plt):
     # Visualize loaded ground truth images
+    # Note: GT images are now in linear space, convert to sRGB for display
     fig1, axes1 = plt.subplots(2, 4, figsize=(14, 7))
 
     for idx, ax in enumerate(axes1.flat):
         if idx < len(gt_images):
             img_np = gt_images[idx].permute(1, 2, 0).cpu().numpy()
-            ax.imshow(np.clip(img_np, 0, 1))
+            # Convert linear to sRGB for proper display
+            img_np = linear_to_srgb(img_np)
+            ax.imshow(img_np)
             ax.set_title(f"View {idx}")
         ax.axis("off")
 
@@ -262,7 +295,7 @@ def _(MoleculeInstance, Scene, device, np, template, torch):
     # Create learnable scene with multiple water molecules
     learn_scene = Scene()
 
-    N_WATER_MOLECULES = 50
+    N_WATER_MOLECULES = 500
 
     # Add several water molecules at different positions
     # positions = [
@@ -393,9 +426,9 @@ def _(
     from mc3gs.train.losses import ssim_loss
 
     # Training configuration
-    n_iterations = 10
-    lr_pose = 0.5  # Learning rate for pose parameters
-    lr_color = 0.5 # Learning rate for color parameters
+    n_iterations = 150
+    lr_pose = 0.1  # Learning rate for pose parameters
+    lr_color = 0.1 # Learning rate for color parameters
 
     # Separate parameter groups with different learning rates
     # This allows colors to learn faster while pose remains stable
@@ -508,26 +541,37 @@ def _(mo):
 
 
 @app.cell
-def _(gt_images, learn_scene, np, plt, render_scene, torch, train_cameras):
+def _(
+    gt_images,
+    learn_scene,
+    linear_to_srgb,
+    np,
+    plt,
+    render_scene,
+    torch,
+    train_cameras,
+):
     # Final comparison
     fig4, axes4 = plt.subplots(3, 4, figsize=(14, 10))
 
     with torch.no_grad():
         for i4 in range(min(4, len(gt_images))):
-            # Ground truth
+            # Ground truth (convert linear to sRGB for display)
             gt_np4 = gt_images[i4].permute(1, 2, 0).cpu().numpy()
-            axes4[0, i4].imshow(np.clip(gt_np4, 0, 1))
+            gt_srgb4 = linear_to_srgb(gt_np4)
+            axes4[0, i4].imshow(gt_srgb4)
             axes4[0, i4].set_title(f"GT View {i4}")
             axes4[0, i4].axis("off")
 
-            # Optimized prediction
+            # Optimized prediction (convert linear to sRGB for display)
             pred4 = render_scene(learn_scene, train_cameras[i4], sh_degree=0, background_color=1.0)
             pred_np4 = pred4.permute(1, 2, 0).cpu().numpy()
-            axes4[1, i4].imshow(np.clip(pred_np4, 0, 1))
+            pred_srgb4 = linear_to_srgb(pred_np4)
+            axes4[1, i4].imshow(pred_srgb4)
             axes4[1, i4].set_title(f"Optimized View {i4}")
             axes4[1, i4].axis("off")
 
-            # Difference (amplified for visibility)
+            # Difference (computed in linear space, amplified for visibility)
             diff4 = np.abs(gt_np4 - pred_np4) * 3
             axes4[2, i4].imshow(np.clip(diff4, 0, 1))
             axes4[2, i4].set_title(f"Diff x3")
@@ -572,221 +616,6 @@ def _(instances, mo, torch):
 @app.cell
 def _(mo):
     mo.md("""
-    ## 6. Save HTML Visualization
-
-    Save an interactive HTML file displaying the fitted scene results.
-    This can be opened in any browser to view the final renders.
-    """)
-    return
-
-
-@app.cell
-def _(
-    Path,
-    gt_images,
-    history,
-    learn_scene,
-    np,
-    render_scene,
-    torch,
-    train_cameras,
-):
-    import base64
-    from datetime import datetime
-    from io import BytesIO
-
-    # Create output directory
-    output_dir = Path("notebooks/example_outputs")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate rendered images as base64
-    def tensor_to_base64(img_tensor):
-        """Convert a [C, H, W] tensor to base64 PNG string."""
-        img_np = img_tensor.permute(1, 2, 0).cpu().numpy()
-        img_np = (np.clip(img_np, 0, 1) * 255).astype(np.uint8)
-        from PIL import Image as PILImage
-        pil_img = PILImage.fromarray(img_np)
-        buffer = BytesIO()
-        pil_img.save(buffer, format="PNG")
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-    # Render all views
-    rendered_views = []
-    with torch.no_grad():
-        for _cam_idx, _camera in enumerate(train_cameras):
-            _gt = gt_images[_cam_idx]
-            _pred = render_scene(learn_scene, _camera, sh_degree=0, background_color=1.0)
-            rendered_views.append({
-                "gt_b64": tensor_to_base64(_gt),
-                "pred_b64": tensor_to_base64(_pred),
-            })
-
-    # Generate HTML
-    html_content = f'''<!DOCTYPE html>
-    <html lang="en">
-    <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MC-3GS Training Results - NeRF Dataset</title>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #eee;
-            min-height: 100vh;
-            padding: 2rem;
-        }}
-        .container {{ max-width: 1400px; margin: 0 auto; }}
-        h1 {{
-            text-align: center;
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            background: linear-gradient(90deg, #00d4ff, #7b2ff7);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }}
-        .subtitle {{
-            text-align: center;
-            color: #888;
-            margin-bottom: 2rem;
-        }}
-        .stats {{
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
-        }}
-        .stat-card {{
-            background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            padding: 1.5rem 2rem;
-            text-align: center;
-            border: 1px solid rgba(255,255,255,0.1);
-        }}
-        .stat-value {{
-            font-size: 2rem;
-            font-weight: bold;
-            color: #00d4ff;
-        }}
-        .stat-label {{ color: #888; font-size: 0.9rem; }}
-        .section-title {{
-            font-size: 1.5rem;
-            margin: 2rem 0 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 2px solid rgba(255,255,255,0.1);
-        }}
-        .views-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 1.5rem;
-        }}
-        .view-card {{
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid rgba(255,255,255,0.1);
-        }}
-        .view-header {{
-            padding: 0.75rem 1rem;
-            background: rgba(0,0,0,0.3);
-            font-weight: 600;
-        }}
-        .view-images {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-        }}
-        .view-images img {{
-            width: 100%;
-            height: auto;
-            display: block;
-        }}
-        .img-label {{
-            text-align: center;
-            padding: 0.5rem;
-            font-size: 0.8rem;
-            color: #888;
-            background: rgba(0,0,0,0.2);
-        }}
-        .footer {{
-            text-align: center;
-            margin-top: 3rem;
-            color: #666;
-            font-size: 0.85rem;
-        }}
-    </style>
-    </head>
-    <body>
-    <div class="container">
-        <h1>🔬 MC-3GS Training Results</h1>
-        <p class="subtitle">Molecule-Constrained Gaussian Splatting on NeRF Lego Dataset</p>
-
-        <div class="stats">
-            <div class="stat-card">
-                <div class="stat-value">{len(train_cameras)}</div>
-                <div class="stat-label">Training Views</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{history["iteration"][-1] + 1}</div>
-                <div class="stat-label">Iterations</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{history["psnr"][-1]:.2f} dB</div>
-                <div class="stat-label">Final PSNR</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value">{history["loss"][-1]:.4f}</div>
-                <div class="stat-label">Final Loss</div>
-            </div>
-        </div>
-
-        <h2 class="section-title">📸 Ground Truth vs Optimized Renders</h2>
-        <div class="views-grid">
-    '''
-
-    for _view_idx, _view_data in enumerate(rendered_views):
-        html_content += f'''
-            <div class="view-card">
-                <div class="view-header">View {_view_idx}</div>
-                <div class="view-images">
-                    <div>
-                        <img src="data:image/png;base64,{_view_data["gt_b64"]}" alt="Ground Truth {_view_idx}">
-                        <div class="img-label">Ground Truth</div>
-                    </div>
-                    <div>
-                        <img src="data:image/png;base64,{_view_data["pred_b64"]}" alt="Optimized {_view_idx}">
-                        <div class="img-label">Optimized</div>
-                    </div>
-                </div>
-            </div>
-    '''
-
-    html_content += f'''
-        </div>
-
-        <div class="footer">
-            <p>Generated by MC-3GS Training Demo • {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-            <p>Note: Water molecules cannot fully represent the lego scene - this demonstrates the training pipeline.</p>
-        </div>
-    </div>
-    </body>
-    </html>
-    '''
-
-    # Save HTML file
-    html_path = output_dir / "nerf_training_results.html"
-    with open(html_path, "w") as _f:
-        _f.write(html_content)
-
-    print(f"✓ Saved HTML visualization to: {html_path}")
-    print(f"  Open in browser to view the results!")
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md("""
     ## Conclusion
 
     This demo showed how to use MC-3GS with real images from NeRF datasets:
@@ -797,14 +626,20 @@ def _(mo):
     4. **Evaluation**: Compare predictions with ground truth
     5. **Export**: Save HTML visualization for viewing in browser
 
-    ### Output Files
-    - `notebooks/example_outputs/nerf_training_results.html` - Interactive visualization
 
     ### For Real Applications
     - Use molecules that match your scene (e.g., actual molecular microscopy data)
     - Increase training iterations and views
     - Use higher SH degree for view-dependent effects
     - Use CUDA backend for faster rendering at higher resolutions
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+ 
     """)
     return
 
